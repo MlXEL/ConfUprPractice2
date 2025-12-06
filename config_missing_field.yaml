@@ -1,0 +1,4 @@
+repository: "http://archive.ubuntu.com/ubuntu/"
+mode: "repo"
+output_image: "graph.png"
+max_depth: 3
