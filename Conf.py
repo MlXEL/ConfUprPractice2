@@ -10,7 +10,7 @@ except Exception:
     sys.exit(2)
 
 
-DEFAULT_CONFIG = "config.yaml"
+DEFAULT_CONFIG = "config_valid.yaml"
 
 
 def load_config(path):
@@ -134,7 +134,6 @@ def main():
     print_kv(params)
 
     print("\nЭтап 1: вывод параметров выполнен успешно.")
-
 
 if __name__ == "__main__":
     main()
