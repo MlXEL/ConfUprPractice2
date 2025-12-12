@@ -1,5 +1,5 @@
 package_name: "nano"
-repository: "http://archive.ubuntu.com/ubuntu/"
+repository: "http://archive.ubuntu.com/ubuntu/dists/focal/main/binary-amd64"
 mode: "repo"
 output_image: "valid_graph.png"
 max_depth: 5

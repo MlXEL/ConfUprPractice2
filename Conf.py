@@ -2,10 +2,13 @@ import argparse
 import os
 import sys
 from urllib.parse import urlparse
+import gzip
+import urllib.request
+from io import StringIO
 
 try:
     import yaml
-except Exception:
+except ImportError:
     print("Ошибка: требуется библиотека PyYAML. Установите ее: pip install pyyaml")
     sys.exit(2)
 
@@ -41,10 +44,10 @@ def validate_url_or_path(value, name):
     if not isinstance(value, str) or value.strip() == "":
         raise ValueError(f"Параметр '{name}' должен быть непустой строкой.")
     val = value.strip()
-    #Проверить как путь
+    # Проверить как путь
     if os.path.exists(val):
         return
-    #Проверить как URL
+    # Проверить как URL
     parsed = urlparse(val)
     if parsed.scheme and parsed.netloc:
         return
@@ -68,7 +71,6 @@ def validate_int(value, name, minimum=0, maximum=None):
     if isinstance(value, int):
         n = value
     else:
-        #Попытка привести строку к int
         try:
             n = int(value)
         except Exception:
@@ -85,8 +87,60 @@ def print_kv(params):
         print(f"{k}: {params[k]}")
 
 
+def extract_dependencies(packages_content, package_name):
+    """
+    Извлекает прямые зависимости указанного пакета из содержимого файла Packages.
+    """
+    lines = iter(packages_content.splitlines())
+    current_package = None
+    depends_line = None
+
+    for line in lines:
+        line = line.strip()
+
+        if line.startswith("Package: "):
+            current_package = line[len("Package: "):].strip()
+            depends_line = None
+        elif line.startswith("Depends: ") and current_package == package_name:
+            depends_line = line[len("Depends: "):].strip()
+            break
+
+    if not depends_line:
+        return []
+
+    # Разбор Depends: pkg1, pkg2 (>= ver), pkg3
+    dependencies = []
+    for dep in depends_line.split(','):
+        dep = dep.strip()
+        # Убираем версии и прочее
+        dep = dep.split()[0]
+        if dep:
+            dependencies.append(dep)
+
+    return dependencies
+
+
+def get_repo_packages_content(repo_url):
+    """
+    Скачивает и возвращает содержимое файла Packages или Packages.gz из репозитория.
+    """
+    packages_url = repo_url.rstrip('/') + '/Packages'
+    gz_url = packages_url + '.gz'
+
+    try:
+        response = urllib.request.urlopen(gz_url)
+        content = gzip.decompress(response.read()).decode('utf-8')
+        return content
+    except Exception:
+        try:
+            response = urllib.request.urlopen(packages_url)
+            return response.read().decode('utf-8')
+        except Exception as e:
+            raise ValueError(f"Не удалось получить файл Packages: {e}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Минимальный прототип визуализации зависимостей (Этап 1).")
+    parser = argparse.ArgumentParser(description="Минимальный прототип визуализации зависимостей (Этап 2).")
     parser.add_argument("-c", "--config", default=DEFAULT_CONFIG, help="Путь к YAML-конфигу")
     args = parser.parse_args()
 
@@ -97,43 +151,60 @@ def main():
         sys.exit(1)
 
     try:
-        #package_name
-        validate_string(cfg.get("package_name"), "package_name")
+        # Валидация параметров
+        package_name = cfg.get("package_name")
+        validate_string(package_name, "package_name")
 
-        #repository (URL или путь)
-        validate_url_or_path(cfg.get("repository"), "repository")
+        repo_url = cfg.get("repository")
+        validate_url_or_path(repo_url, "repository")
 
-        #mode: 'test' or 'repo'
         mode = validate_mode(cfg.get("mode"), "mode")
 
-        #output_image — имя файла (строка)
-        validate_string(cfg.get("output_image"), "output_image")
-        #Проверить расширение
-        out_name = cfg.get("output_image").strip()
-        if "." not in out_name:
-            raise ValueError("output_image должно содержать расширение файла, например 'graph.png'.")
+        output_image = cfg.get("output_image")
+        validate_string(output_image, "output_image")
+        if "." not in output_image:
+            raise ValueError("output_image должно содержать расширение файла.")
 
-        #max_depth — целое >=0
         max_depth = validate_int(cfg.get("max_depth"), "max_depth", minimum=0, maximum=100)
 
     except Exception as e:
         print(f"Ошибка валидации конфигурации: {e}")
         sys.exit(2)
 
-    #Параметры для печати
+    # Параметры для вывода
     params = {
-        "package_name": cfg.get("package_name"),
-        "repository": cfg.get("repository"),
+        "package_name": package_name,
+        "repository": repo_url,
         "mode": mode,
-        "output_image": out_name,
+        "output_image": output_image,
         "max_depth": max_depth,
     }
 
-    #Вывести все параметры в формате ключ-значение
     print("Параметры конфигурации:")
     print_kv(params)
 
-    print("\nЭтап 1: вывод параметров выполнен успешно.")
+    print("\nЭтап 1: вывод параметров выполнен успешно.\n")
+
+    # === ЭТАП 2: сбор данных ===
+    print("Этап 2: Сбор данных")
+
+    try:
+        packages_content = get_repo_packages_content(repo_url)
+        dependencies = extract_dependencies(packages_content, package_name)
+
+        if dependencies:
+            print(f"Прямые зависимости пакета '{package_name}':")
+            for dep in dependencies:
+                print(f"- {dep}")
+        else:
+            print(f"У пакета '{package_name}' нет зависимостей или он не найден в репозитории.")
+
+    except Exception as e:
+        print(f"Ошибка при получении зависимостей: {e}")
+        sys.exit(3)
+
+    print("\nЭтап 2: сбор данных выполнен успешно.")
+
 
 if __name__ == "__main__":
     main()

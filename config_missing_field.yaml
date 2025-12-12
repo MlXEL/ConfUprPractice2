@@ -1,4 +1,4 @@
-repository: "http://archive.ubuntu.com/ubuntu/"
+repository: "hhttp://archive.ubuntu.com/ubuntu/dists/focal/main/binary-amd64"
 mode: "repo"
 output_image: "graph.png"
 max_depth: 3
