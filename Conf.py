@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import gzip
 import urllib.request
 from io import StringIO
+from collections import deque
 
 try:
     import yaml
@@ -120,27 +121,83 @@ def extract_dependencies(packages_content, package_name):
     return dependencies
 
 
-def get_repo_packages_content(repo_url):
+def read_test_repo(test_file_path):
     """
-    Скачивает и возвращает содержимое файла Packages или Packages.gz из репозитория.
+    Читает тестовый файл и возвращает словарь зависимостей.
+    Формат: A: B, C
     """
-    packages_url = repo_url.rstrip('/') + '/Packages'
-    gz_url = packages_url + '.gz'
+    deps_map = {}
+    with open(test_file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if ':' not in line:
+                continue
+            pkg, deps_str = line.split(':', 1)
+            pkg = pkg.strip()
+            deps_list = [d.strip() for d in deps_str.split(',') if d.strip()]
+            deps_map[pkg] = deps_list
+    return deps_map
 
-    try:
-        response = urllib.request.urlopen(gz_url)
-        content = gzip.decompress(response.read()).decode('utf-8')
-        return content
-    except Exception:
+
+def get_repo_packages_content(repo_url_or_path, mode):
+    """
+    Возвращает содержимое файла Packages (или словарь для теста).
+    """
+    if mode == "test":
+        return read_test_repo(repo_url_or_path)
+    else:
+        packages_url = repo_url_or_path.rstrip('/') + '/Packages'
+        gz_url = packages_url + '.gz'
+
         try:
-            response = urllib.request.urlopen(packages_url)
-            return response.read().decode('utf-8')
-        except Exception as e:
-            raise ValueError(f"Не удалось получить файл Packages: {e}")
+            response = urllib.request.urlopen(gz_url)
+            content = gzip.decompress(response.read()).decode('utf-8')
+            return content
+        except Exception:
+            try:
+                response = urllib.request.urlopen(packages_url)
+                return response.read().decode('utf-8')
+            except Exception as e:
+                raise ValueError(f"Не удалось получить файл Packages: {e}")
+
+
+def build_dependency_graph_bfs(start_package, repo_data, max_depth):
+    """
+    Строит граф зависимостей с помощью BFS, ограничивая глубину и избегая циклов.
+    """
+    visited = set()
+    graph = {}
+    queue = deque([(start_package, 0)])  # (package, depth)
+
+    while queue:
+        current_pkg, depth = queue.popleft()
+
+        if depth > max_depth:
+            continue
+
+        if current_pkg in visited:
+            continue
+
+        visited.add(current_pkg)
+
+        if isinstance(repo_data, dict):  # Тестовый режим
+            deps = repo_data.get(current_pkg, [])
+        else:  # Репозиторий apt
+            deps = extract_dependencies(repo_data, current_pkg)
+
+        graph[current_pkg] = deps
+
+        for dep in deps:
+            if dep not in visited and depth + 1 <= max_depth:
+                queue.append((dep, depth + 1))
+
+    return graph
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Минимальный прототип визуализации зависимостей (Этап 2).")
+    parser = argparse.ArgumentParser(description="Граф зависимостей пакетов (Этап 3).")
     parser.add_argument("-c", "--config", default=DEFAULT_CONFIG, help="Путь к YAML-конфигу")
     args = parser.parse_args()
 
@@ -186,24 +243,49 @@ def main():
     print("\nЭтап 1: вывод параметров выполнен успешно.\n")
 
     # === ЭТАП 2: сбор данных ===
-    print("Этап 2: Сбор данных")
+    print("=== Этап 2: Сбор данных ===")
 
     try:
-        packages_content = get_repo_packages_content(repo_url)
-        dependencies = extract_dependencies(packages_content, package_name)
+        repo_data = get_repo_packages_content(repo_url, mode)
 
-        if dependencies:
-            print(f"Прямые зависимости пакета '{package_name}':")
-            for dep in dependencies:
-                print(f"- {dep}")
+        if mode == "repo":
+            dependencies = extract_dependencies(repo_data, package_name)
+            if dependencies:
+                print(f"Прямые зависимости пакета '{package_name}':")
+                for dep in dependencies:
+                    print(f"- {dep}")
+            else:
+                print(f"У пакета '{package_name}' нет зависимостей или он не найден в репозитории.")
         else:
-            print(f"У пакета '{package_name}' нет зависимостей или он не найден в репозитории.")
+            print(f"Тестовый режим: зависимости пакета '{package_name}' (из файла):")
+            deps = repo_data.get(package_name, [])
+            if deps:
+                for dep in deps:
+                    print(f"- {dep}")
+            else:
+                print(f"У пакета '{package_name}' нет зависимостей в тестовом файле.")
 
     except Exception as e:
         print(f"Ошибка при получении зависимостей: {e}")
         sys.exit(3)
 
-    print("\nЭтап 2: сбор данных выполнен успешно.")
+    print("\nЭтап 2: сбор данных выполнен успешно.\n")
+
+    # === ЭТАП 3: построение графа зависимостей ===
+    print("Этап 3: Построение графа зависимостей")
+
+    try:
+        dependency_graph = build_dependency_graph_bfs(package_name, repo_data, max_depth)
+
+        print(f"\nГраф зависимостей (до глубины {max_depth}):")
+        for pkg, deps in dependency_graph.items():
+            print(f"{pkg} -> {deps}")
+
+    except Exception as e:
+        print(f"Ошибка при построении графа: {e}")
+        sys.exit(4)
+
+    print("\nЭтап 3: построение графа выполнено успешно.")
 
 
 if __name__ == "__main__":
